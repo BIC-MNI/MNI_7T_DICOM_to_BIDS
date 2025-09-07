@@ -1,0 +1,75 @@
+Bootstrap: docker
+From: debian:11
+Stage: spython-base
+
+%files
+/home/hayabusa/MNI_7T_DICOM_to_BIDS /mni_7t_dicom_to_bids
+
+%post
+# Use an old Debian system to compile the converter with an old glibc version and ensure
+# compatibility with many users.
+
+apt-get update
+
+# Install Python 3.11
+
+# Python 3.11 is not available by default on Debian 10. As such, we compile it from source instead.
+
+# Install the Python build dependencies.
+# Copied from https://github.com/python/cpython/blob/3.11/.github/workflows/posix-deps-apt.sh
+apt-get -yq install \
+build-essential \
+pkg-config \
+ccache \
+gdb \
+lcov \
+libb2-dev \
+libbz2-dev \
+libffi-dev \
+libgdbm-dev \
+libgdbm-compat-dev \
+liblzma-dev \
+libncurses5-dev \
+libreadline6-dev \
+libsqlite3-dev \
+libssl-dev \
+lzma \
+lzma-dev \
+tk-dev \
+uuid-dev \
+xvfb \
+zlib1g-dev
+
+# Install an HTTP client to download Python.
+apt-get install -y wget
+
+# Install Python 3.11.
+wget https://www.python.org/ftp/python/3.11.9/Python-3.11.9.tgz \
+&& tar xzf Python-3.11.9.tgz \
+&& cd Python-3.11.9 \
+&& ./configure --enable-optimizations --enable-shared \
+&& make altinstall \
+&& cd .. \
+&& rm -r Python-3.11.9 Python-3.11.9.tgz
+
+# Install the MNI 7T DICOM to BIDS converter
+
+# Install Git.
+apt-get install -y git  
+
+# Copy the project directory.
+mkdir -p /mni_7t_dicom_to_bids
+cd /mni_7t_dicom_to_bids
+
+# Install the package and its other dependencies.
+pip3.11 install ipython pyinstaller dcm2niix
+pip3.11 install --no-cache-dir git+https://github.com/BIC-MNI/BIC_MRI_pipeline_util.git
+pip3.11 install --no-cache-dir .[dev] 
+
+# Run PyInstaller, the executable will be created as `/mni_7t_dicom_to_bids/dist/mni7t_dcm2bids`.
+%runscript
+cd /mni_7t_dicom_to_bids
+exec /bin/bash pyinstaller mni7t_dcm2bids.spec "$@"
+%startscript
+cd /mni_7t_dicom_to_bids
+exec /bin/bash pyinstaller mni7t_dcm2bids.spec "$@"

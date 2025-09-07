@@ -23,6 +23,28 @@ To install the converter with Docker, clone the GitHub repository and build the 
 git clone https://github.com/BIC-MNI/MNI_7T_DICOM_to_BIDS mni_7t_dicom_to_bids
 docker build -t mni_7t_dicom_to_bids -f mni_7t_dicom_to_bids/run.Dockerfile mni_7t_dicom_to_bids
 ```
+### Apptainer / Singularity (HPC deployment)
+
+To install the converter with Apptainer, clone the Github repository (APB forked main branch) and build the project using Apptainer recipe file (.def):
+
+```sh
+git clone https://github.com/hayabusapb/MNI_7T_DICOM_to_BIDS
+apptainer build <IMAGE.sig> ./MNI_7T_DICOM_to_BIDS/MPN7T.def
+```
+The apptainer container is by default rootless and contain all stand alone dependencies to run in HPC. 
+Its size is 448.5MB, tested as per dist. Apptainer 1.4.1 
+To execute from container do module load apptainer in HPC of choice, then execute as:
+
+```sh
+IN="<PATH_TO_DICOM>"
+OUT="<PATH_TO_BIDS>"
+IMG="<PATH_TO_IMAGE.sif>"
+SUB="<SUBJECT_ID>"
+SESSION="<SESSION>"
+apptainer exec --bind ${IN}:/mnt_IN,${OUT}:/mnt_OUT $IMG mni7t_dcm2bids /mnt_IN /mnt_OUT --subject $SUB --session $SESSION
+```
+Alternatively a frozen image can be obtained here:
+https://zenodo.org/records/17072935
 
 ## Execution
 
@@ -31,8 +53,9 @@ You can run the MNI 7T DICOM to BIDS converter using the following command:
 ```sh
 mni7t_dcm2bids <dicom_study_path> <bids_dataset_path> --subject <subject_label> --session <session_label>
 ```
+* To run from container (e.g apptainer), make sure to bind directories before executing such as described in the example below
 
-The input DICOM directory must contain the DICOMs of a single session. The output BIDS directory can either be an empty directory (which can be created by the script) or be an existing BIDS directory (in which case the converted session is added to the existing BIDS).
+Inputs must be provided as strings matching exactly participants provided input data. The input DICOM directory must contain the DICOMs of a single session (No Metafile in this directory). The output BIDS directory can either be an empty directory (which can be created by the script) or be an existing BIDS directory (in which case the converted session is added to the existing BIDS). 
 
 ## BIDS naming dictionary
 
