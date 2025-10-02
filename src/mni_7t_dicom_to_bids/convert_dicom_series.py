@@ -3,8 +3,9 @@ import re
 import shutil
 import subprocess
 import tempfile
+import pydicom
+import json
 from collections.abc import Callable
-from pathlib import Path
 from shlex import quote
 
 from bic_util.print import print_error, print_error_exit, print_warning, with_print_subscript
@@ -18,7 +19,7 @@ from mni_7t_dicom_to_bids.dataclass import (
     DicomSeriesConversionsCounter,
     DicomSeriesInfo,
 )
-from mni_7t_dicom_to_bids.patch_files import patch_files
+from mni_7t_dicom_to_bids.post_process import post_process
 from mni_7t_dicom_to_bids.print import print_existing_bids_files
 
 
@@ -27,8 +28,6 @@ def check_dicom_to_niix():
     Check that the `dcm2niix` command is accessible, or exit the program with an error if that is
     not the case.
     """
-
-    print("Checking `dcm2niix` availability...")
 
     if shutil.which('dcm2niix') is None:
         print_error_exit(
@@ -42,8 +41,6 @@ def convert_dicom_series(bids_session: BidsSessionInfo, dicom_bids_mapping: Dico
     Convert the mapped BIDS acquisitions and DICOM series to NIfTI.
     """
 
-    print('Converting DICOM series to NIfTI...')
-
     counter = get_conversions_counter(dicom_bids_mapping, args)
 
     for bids_acquisition, dicom_series_list in dicom_bids_mapping.bids_dicom_series_dict.items():
@@ -56,9 +53,8 @@ def convert_dicom_series(bids_session: BidsSessionInfo, dicom_bids_mapping: Dico
             if len(dicom_series_list) == 1:
                 run_number = None
 
-            bids_data_type_path = get_bids_data_type_dir_path(args.bids_dataset_path, bids_session, bids_acquisition)
-
-            run_conversion_function(
+            bids_data_type_path = get_bids_data_type_dir_path(args.bids_dataset_path, bids_session, bids_acquisition)            
+            ML=run_conversion_function(
                 dicom_series,
                 bids_data_type_path,
                 counter,
@@ -70,9 +66,15 @@ def convert_dicom_series(bids_session: BidsSessionInfo, dicom_bids_mapping: Dico
                     args,
                     tmp_dicom_dir_path,
                     tmp_output_path,
-                )
-            )
-
+                )   
+            ) 
+            
+            if ML is not None:
+              bidsin = [x for x in ML if x[-5:]==".json"]
+              for fnum in bidsin:
+               print(f"This is working file {fnum}")   
+               patchjson(bids_data_type_path, fnum, dicom_series, run_number)
+                       
     if isinstance(args.unknowns, ConvertUnknownsArg):
         for unknown_dicom_series in dicom_bids_mapping.unknown_dicom_series_list:
             print(
@@ -88,12 +90,17 @@ def convert_dicom_series(bids_session: BidsSessionInfo, dicom_bids_mapping: Dico
                     unknown_dicom_series, tmp_dicom_dir_path, tmp_ouput_dir_path, args
                 ),
             )
-
+             
+            if ML is not None:
+              bidsin = [x for x in ML if x[-5:]==".json"]
+              for fnum in bidsin:
+               print(f"This is working file {fnum}")   
+               patchjson(bids_data_type_path, fnum, dicom_series, run_number)
     print(
         f"Processed {counter.total} DICOM series, including {counter.successes} successful conversions to BIDS and"
         f" {counter.errors} errors."
     )
-
+    
 
 def get_conversions_counter(dicom_bids_mapping: DicomBidsMapping, args: Args) -> DicomSeriesConversionsCounter:
     """
@@ -123,14 +130,14 @@ def convert_bids_dicom_series(
     tmp_output_dir_path: str,
 ):
     """
-    Convert an unknown DICOM series to NIfTI.
+    Convert a known DICOM series to NIfTI.
     """
 
     file_name = get_bids_acquisition_file_name(bids_session, bids_acquisition.file_name, run_number)
 
     run_dicom_to_niix(tmp_dicom_dir_path, tmp_output_dir_path, file_name, args)
 
-    patch_files(Path(tmp_output_dir_path))
+    post_process(tmp_output_dir_path)
 
     # Check if the files already exist in the target directory.
 
@@ -192,6 +199,7 @@ def run_conversion_function(
     """
 
     try:
+        ML=[]
         with tempfile.TemporaryDirectory() as tmp_dicom_dir_path:
             # Copy the DICOM files of the DICOM series in the temporary input directory.
             for dicom_file_path in dicom_series.file_paths:
@@ -203,8 +211,12 @@ def run_conversion_function(
                 # Move the output files to their final directory.
                 for file in os.scandir(tmp_output_dir_path):
                     shutil.move(file.path, output_dir_path)
-
+                    #breakpoint()
+                    ML.append(str(file.name))
+                    
             counter.successes += 1
+            return ML # list of json paths to read elsewhere for patching. APB
+            
     except Exception as error:
         print_error(str(error))
         counter.errors += 1
@@ -217,12 +229,12 @@ def run_dicom_to_niix(dicom_dir_path: str, output_dir_path: str, file_name: str,
 
     command = [
         'dcm2niix',
-        '-z', 'y', '-b', 'y',
+        '-z', 'y', '-b', 'y', 
         '-o', output_dir_path,
         '-f', file_name,
         dicom_dir_path,
     ]
-
+            
     print(f"Running dcm2niix with command: '{' '.join(command)}'.")
 
     process = with_print_subscript(lambda: subprocess.run(command))
@@ -283,3 +295,58 @@ def get_bids_acquisition_file_name(bids_session: BidsSessionInfo, base_name: str
         bids_name.add('run', str(run_number))
 
     return str(bids_name)
+
+## To fetch custom fields in DICOM that dcm2niix is ignoring_APB21Aug25
+def find_string_in_file(filepath, search_string):
+    """
+    Searches for a string in a text file and returns a list of lines
+    containing the string.
+
+    Args:
+        filepath (str): The path to the text file.
+        search_string (str): The string to search for.
+
+    Returns:
+        list: A list of lines (including newline characters) that contain the search_string.
+    """
+    matched_lines = []
+    try:
+        with open(filepath, 'r', encoding='utf-8', errors='ignore') as file:
+            for line in file:
+                if search_string in line:
+                    matched_lines.append(line)
+    except FileNotFoundError:
+        print(f"Error: File not found at {filepath}")
+    return matched_lines
+
+# Add custom fields to JSON # Modified as per only flip angle 
+def addfields2json(jsonfile, mtFlip_Angle):
+#def addfields2json(jsonfile, Patient_Age, Patient_Birth, Patient_Sex, Patient_Height, Patient_Weight, mtFlip_Angle):
+    """
+    Add fields to json for all sequences
+    """
+    # Open and load the JSON data
+    try:
+      with open(jsonfile, 'r') as f:
+          data = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError) as e:
+          print(f"Error loading JSON: {e}")
+          data = {}
+    data['mtFlip_Angle'] = mtFlip_Angle
+   # Save the modified JSON data back to the file
+    with open(jsonfile, 'w') as f:
+     json.dump(data, f, indent=4)
+
+    print(f"JSON data in '{jsonfile}' updated successfully.")
+    
+# Patch-Json
+def patchjson(bids_data_type_path,bidsin, dicom_series, run_number):
+    
+    if 'neuromelaninMTw' in bidsin:
+     print(f"Neuromelanin MPN Series found in: {bidsin} and run: {run_number}")
+     
+     FLA=find_string_in_file(dicom_series.file_paths[0], 'sWipMemBlock.adFree[2]')
+     mtFlip_Angle=str(re.findall(r'\d+\.\d+', FLA[0])[0])
+    else:
+     mtFlip_Angle='None'   
+addfields2json(os.path.join(bids_data_type_path,bidsin), mtFlip_Angle) 
